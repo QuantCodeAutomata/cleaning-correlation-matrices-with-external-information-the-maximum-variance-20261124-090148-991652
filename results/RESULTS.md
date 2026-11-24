@@ -162,8 +162,8 @@ paper", not a separate unexplained gap.
   `mean(weekly return) / std(weekly return) * sqrt(52)` on the realized
   weekly portfolio returns.
 - **RIE implementation.** The paper references Bun, Bouchaud, Potters (2016,
-  2017) for the RIE without printing its formulas in the text retrieved for
-  this replication; `src/rie.py` implements the Marchenko-Pastur-based
+  2017) for the RIE without printing its formulas in the working paper
+  itself; `src/rie.py` implements the Marchenko-Pastur-based
   eigenvalue-clipping nonlinear shrinkage of that reference from scratch
   (no maintained "pyriest" package was available), documented in the module
   with the eigenvalue overlap/clipping formula used.

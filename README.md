@@ -1,6 +1,6 @@
 # Cleaning correlation matrices with external information: the Maximum Variance estimator
 
-Replication of selected experiments from J. Bun, S. Ciliberti, E. Sérié,
+Replication of two experiments from J. Bun, S. Ciliberti, E. Sérié,
 "Cleaning correlation matrices with external information: the Maximum
 Variance estimator" (Capital Fund Management working paper).
 
