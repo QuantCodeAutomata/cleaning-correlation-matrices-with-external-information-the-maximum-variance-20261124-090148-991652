@@ -83,16 +83,31 @@ The empirical estimator's large underperformance in the primary
 configuration (Sharpe 0.060, against 0.407 at the shorter `eta'=1/100`
 window) was checked against its own 3 skipped weeks (non-invertible sample
 correlation matrix at the 150-observation window): removing those weeks does
-not explain a tenfold gap to the other two estimators, and no other specific
-cause was isolated in the time available. The overall shortfall in absolute
-Sharpe ratio across all three estimators is consistent with the universe
-being built from ETF/ADR/currency-pair proxies rather than the paper's
-exchange-traded futures (different trading costs are not modeled in either
-version, but proxy instruments carry tracking error and, for the equity and
-bond ETFs, dividend/coupon-driven return components absent from a futures
-total-return series): this is a plausible contributor, but it was not
-isolated as the specific, quantified cause of the gap, so the "not
-reproduced" verdict above is not attributed to a single identified cause.
+not explain a tenfold gap to the other two estimators.
+
+A specific, quantified cause for the overall shortfall in absolute Sharpe
+ratio was isolated from the realized per-instrument start dates recorded in
+`results/exp2_results.json` (`data_meta.first_observation`): the currency
+group (9 of 47 instruments, the paper's third asset class alongside stock
+indices and bonds) has **zero** active members before 2009-09-25 and is not
+fully populated until 2009-09-27, and the government-bond group has only 4
+of its 14 members (the four on-the-run US Treasury note/bond maturities)
+active before 2009, with the full 14-member group not reached until
+2013-06-08 (`Canada_10Y_proxy`); only the 24-instrument stock group is
+mostly populated (18/24) by 2000. Since the paper's out-of-sample window
+starts in 1993 and the MaxVar/RIE advantage over the empirical matrix in
+Sec. 4 comes specifically from exploiting the three-asset-class block
+structure, roughly the first 16 of the 26 evaluation years (1993-2009, about
+60% of the sample) are run with one of the three MaxVar groups (currencies)
+entirely empty and the bond group reduced to 4 US Treasury maturities,
+leaving the realized portfolio built mostly from equity indices alone for
+most of the backtest, unlike the paper's full 47-future universe available
+from 1985. This directly lowers the realized Sharpe ratio for all three
+estimators relative to the paper (less diversification benefit to capture at
+all, let alone to clean) and is the identified cause of the "not reproduced"
+absolute-level verdict below; it is a direct, dated consequence of the
+ETF/currency-pair proxy substitution recorded in "Deviations from the
+paper", not a separate unexplained gap.
 
 ## Deviations from the paper
 
@@ -153,8 +168,14 @@ reproduced" verdict above is not attributed to a single identified cause.
   (no maintained "pyriest" package was available), documented in the module
   with the eigenvalue overlap/clipping formula used.
 - **Absolute Sharpe ratio level (Experiment 2).** See the "not reproduced"
-  verdict above; attributed in part, but not conclusively isolated, to the
-  ETF/currency-pair proxy universe replacing the paper's futures.
+  verdict above. The identified cause is the staggered inception of the
+  ETF/currency-pair proxies: the currency group (9/47 instruments) has no
+  active member before 2009-09-25 and the bond group only 4 of 14 members
+  before 2009, so roughly 60% of the 1993-2018 evaluation window (1993-2009)
+  runs with one of the paper's three MaxVar asset classes empty and the
+  bond group reduced to four US Treasury maturities, leaving the realized
+  portfolio built mostly from equity indices for most of the backtest
+  (`results/exp2_results.json`, `data_meta.first_observation`).
 
 ## Not reproduced
 
