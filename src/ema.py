@@ -76,7 +76,11 @@ def ema_correlation_sequence(weekly_returns: pd.DataFrame, eta_prime: float) -> 
     ----------
     weekly_returns : DataFrame (W, N)
         Weekly, volatility-rescaled returns (output of
-        :func:`daily_to_weekly_returns`).
+        :func:`daily_to_weekly_returns`). A column may start with NaN rows
+        before an instrument's own history begins (paper Sec. 4 real-data
+        universe, where proxies for several contracts are listed only from
+        the 2000s or 2010s); such an instrument joins the recursion from its
+        own first observation instead of contaminating the other entries.
     eta_prime : float
         EMA decay parameter for the correlation estimate.
 
@@ -85,19 +89,43 @@ def ema_correlation_sequence(weekly_returns: pd.DataFrame, eta_prime: float) -> 
     list of (N, N) ndarray
         Correlation matrix estimated using data up to and including each
         weekly observation (no look-ahead: the matrix at index ``t`` uses
-        only rows ``0..t`` of ``weekly_returns``).
+        only rows ``0..t`` of ``weekly_returns``). Entry (i, j) is NaN until
+        both instruments i and j have had at least one observation.
+
+    Notes
+    -----
+    The recursion is applied with the same decay weight to every entry of
+    the matrix at every step, with a missing observation contributing a
+    zero row to the outer product (paper Sec. 2 recursion, read with
+    ``C_hat_{-1} = 0``). ``cov_hat_t`` is then a sum of nonnegative-weighted
+    rank-1 terms ``outer(row_filled_s, row_filled_s)`` with weights that are
+    identical across all entries (i, j) at a given step, so it is positive
+    semi-definite by construction; the subsequent diagonal congruence
+    ``corr = D^{-1} cov_hat D^{-1}`` therefore stays positive semi-definite
+    too. Seeding each pair (i, j) independently on its first joint
+    observation (an earlier version of this routine) instead gives
+    different entries a different effective recursion depth when
+    instruments start trading at different dates, which breaks this
+    invariant and can produce an indefinite "correlation" matrix.
     """
     assert 0.0 < eta_prime <= 1.0, "eta_prime must be in (0, 1]"
     values = weekly_returns.to_numpy()
     n = values.shape[1]
-    cov_hat = np.outer(values[0], values[0])
+    cov_hat = np.zeros((n, n))
+    seen = np.zeros(n, dtype=bool)
     matrices = []
     for t in range(values.shape[0]):
-        if t > 0:
-            cov_hat = (1 - eta_prime) * cov_hat + eta_prime * np.outer(values[t], values[t])
+        row = values[t]
+        valid = ~np.isnan(row)
+        row_filled = np.where(valid, row, 0.0)
+        seen = seen | valid
+        outer_val = np.outer(row_filled, row_filled)
+        cov_hat = (1 - eta_prime) * cov_hat + eta_prime * outer_val
         d = np.sqrt(np.diag(cov_hat))
-        d[d == 0] = np.nan
-        corr = cov_hat / np.outer(d, d)
-        np.fill_diagonal(corr, 1.0)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            corr = cov_hat / np.outer(d, d)
+        joint_seen = seen[:, None] & seen[None, :]
+        corr = np.where(joint_seen, corr, np.nan)
+        np.fill_diagonal(corr, np.where(seen, 1.0, np.nan))
         matrices.append(corr)
     return matrices

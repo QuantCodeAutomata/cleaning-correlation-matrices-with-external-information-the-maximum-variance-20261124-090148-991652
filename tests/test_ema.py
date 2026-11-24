@@ -70,3 +70,36 @@ def test_ema_correlation_sequence_no_lookahead_and_valid_correlation() -> None:
     matrices_half = ema.ema_correlation_sequence(weekly.iloc[:half], eta_prime=0.1)
     for full, partial in zip(matrices[:half], matrices_half):
         np.testing.assert_allclose(full, partial, rtol=1e-10)
+
+
+def test_ema_correlation_sequence_handles_staggered_entry() -> None:
+    """An instrument listed later (paper Sec. 4 real-data universe, where
+    several Table 2 proxies start trading only years after the others) must
+    not contaminate the other entries before it has any data, and must join
+    the recursion cleanly once its own history begins."""
+    returns = _synthetic_returns(80, 3)
+    weekly = ema.daily_to_weekly_returns(returns)
+    late_start = len(weekly) // 2
+    staggered = weekly.copy()
+    staggered.iloc[:late_start, 2] = np.nan
+
+    matrices = ema.ema_correlation_sequence(staggered, eta_prime=0.1)
+    for t in range(late_start):
+        assert np.isnan(matrices[t][2, :]).all()
+        assert np.isnan(matrices[t][:, 2]).all()
+        active = matrices[t][:2, :2]
+        assert np.allclose(np.diag(active), 1.0)
+
+    for t in range(late_start, len(weekly)):
+        corr = matrices[t]
+        assert not np.isnan(corr).any()
+        assert np.allclose(np.diag(corr), 1.0)
+        eigvals = np.linalg.eigvalsh(corr)
+        assert eigvals.min() > -1e-8
+
+    # The two always-active instruments must match a sequence computed with
+    # no missing data at all: the third instrument's absence must not alter
+    # their own pairwise recursion.
+    dense_matrices = ema.ema_correlation_sequence(weekly, eta_prime=0.1)
+    for t in range(len(weekly)):
+        np.testing.assert_allclose(matrices[t][:2, :2], dense_matrices[t][:2, :2], rtol=1e-10)

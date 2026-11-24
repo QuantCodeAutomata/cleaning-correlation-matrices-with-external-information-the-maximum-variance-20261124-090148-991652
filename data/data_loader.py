@@ -99,30 +99,97 @@ def _post_fetch_ohlcvs(tickers: list[str], start_date: str, end_date: str) -> di
     return response.json()
 
 
+def _download_stored_result(result: dict, batch_index: int, start_date: str, end_date: str) -> pd.DataFrame:
+    """Export a stored (large) ``fetch-ohlcvs`` result as a wide CSV and load it.
+
+    A multi-decade, multi-ticker request exceeds the inline answer size
+    (``data_stored: true``); the Dataloader then expects a follow-up
+    ``/save-dataframe`` call and a plain download of the signed artifact URL
+    (massive-rest-market-data skill, "Answer shapes").
+    """
+    export = _request(
+        "POST", "/save-dataframe",
+        {
+            "result_id": result["result_id"],
+            "ticker": f"batch{batch_index}",
+            "dataset_name": "ohlcv",
+            "timeframe": "1d",
+            "start_date": start_date,
+            "end_date": end_date,
+            "file_format": "csv",
+            "data_kind": "ohlcv",
+        },
+    )
+    artifact_id = export["result"]["artifact_id"]
+    link = _request("GET", f"/artifacts/{artifact_id}/download")
+    csv_response = requests.get(link["result"]["url"], timeout=600)
+    csv_response.raise_for_status()
+    return pd.read_csv(pd.io.common.BytesIO(csv_response.content))
+
+
+def _request(method: str, route: str, body: dict | None = None) -> dict:
+    """Thin wrapper shared by ``/save-dataframe`` and ``/artifacts/.../download``."""
+    headers = _dataloader_headers(include_massive=False)
+    for attempt in range(3):
+        response = requests.request(method, DATALOADER_API_ROOT + route, json=body, headers=headers, timeout=300)
+        if response.status_code not in (429, 503, 504) or attempt == 2:
+            break
+        time.sleep(5 * 2 ** attempt)
+    if response.status_code != 200:
+        try:
+            err = response.json()
+        except ValueError:
+            err = {"error": response.text[:300]}
+        raise DataLoaderError(f"{route}: HTTP {response.status_code}: {err}")
+    return response.json()
+
+
 def fetch_close_prices(tickers: list[str], start_date: str, end_date: str) -> tuple[pd.DataFrame, list[dict]]:
     """Daily close prices for ``tickers`` through the QuantX Dataloader.
 
     Returns a wide DataFrame indexed by date (one column per ticker) and the
-    list of ``ticker_details`` entries reported by the Dataloader.
+    list of ``ticker_details`` entries reported by the Dataloader. A batch
+    spanning the paper's multi-decade window typically exceeds the inline
+    answer size; such a batch is exported with ``/save-dataframe`` and
+    downloaded as a CSV instead (massive-rest-market-data skill).
     """
     tickers = list(dict.fromkeys(tickers))
     batches = [tickers[i:i + BATCH_SIZE] for i in range(0, len(tickers), BATCH_SIZE)]
     closes: dict[str, pd.Series] = {}
     all_details: list[dict] = []
-    for batch in batches:
+    for batch_index, batch in enumerate(batches):
         answer = _post_fetch_ohlcvs(batch, start_date, end_date)
         result = answer["result"]
         details = result.get("ticker_details") or []
         all_details.extend(details)
         if result.get("data_stored"):
-            raise DataLoaderError(
-                "fetch-ohlcvs returned a stored (large) result; "
-                "narrow the batch further to keep the answer inline"
-            )
-        rows = result["ohlcv_df"]["rows"]
-        if not rows:
-            continue
-        wide = pd.DataFrame(rows)
+            wide = _download_stored_result(result, batch_index, start_date, end_date)
+            # The stored CSV export names columns by the literal ticker string in
+            # lower case (e.g. "c:audusd_close"), not by the reported "alias"
+            # (e.g. "c_audusd"): try both prefixes so forex and index tickers with
+            # a market-prefix colon (C:, I:, X:) are matched correctly.
+            prefix_map = []
+            for d in details:
+                if d.get("error"):
+                    continue
+                ticker = d["ticker"]
+                for prefix in dict.fromkeys([ticker.lower(), (d.get("alias") or "").lower()]):
+                    if prefix:
+                        prefix_map.append((prefix, ticker))
+            prefix_map.sort(key=lambda item: len(item[0]), reverse=True)
+            rename = {}
+            for col in wide.columns:
+                col_lower = col.lower()
+                for prefix, ticker in prefix_map:
+                    if col_lower.startswith(f"{prefix}_"):
+                        rename[col] = f"{ticker}_{col[len(prefix) + 1:]}"
+                        break
+            wide = wide.rename(columns=rename)
+        else:
+            rows = result["ohlcv_df"]["rows"]
+            if not rows:
+                continue
+            wide = pd.DataFrame(rows)
         stamps = pd.to_datetime(wide["timestamp"], utc=True).dt.tz_convert("America/New_York")
         dates = stamps.dt.normalize().dt.tz_localize(None)
         for detail in details:
@@ -131,7 +198,16 @@ def fetch_close_prices(tickers: list[str], start_date: str, end_date: str) -> tu
             ticker, alias = detail["ticker"], detail.get("alias") or ""
             for name in (f"{ticker}_close", f"{alias}_close", "close"):
                 if name in wide.columns:
-                    closes[ticker] = pd.Series(wide[name].to_numpy(), index=dates, name=ticker)
+                    series = pd.Series(wide[name].to_numpy(), index=dates, name=ticker)
+                    # A stored-CSV export can repeat a trading date across export
+                    # chunks; keep the last reported close for that date (massive-rest
+                    # skill, "rows sorted and duplicates handled by a stated key").
+                    series = series[~series.index.duplicated(keep="last")]
+                    if ticker in closes:
+                        closes[ticker] = pd.concat([closes[ticker], series])
+                        closes[ticker] = closes[ticker][~closes[ticker].index.duplicated(keep="last")]
+                    else:
+                        closes[ticker] = series
                     break
     failed = {d["ticker"]: d["error"] for d in all_details if d.get("error")}
     if not closes:
@@ -217,14 +293,19 @@ def load_universe(
         tickers, non-Massive data sources, and the realised per-instrument
         first/last observation dates.
     """
-    key = hashlib.sha256(f"{start_date}|{end_date}|v2".encode()).hexdigest()[:16]
+    key = hashlib.sha256(f"{start_date}|{end_date}|v3".encode()).hexdigest()[:16]
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_returns, cache_meta = CACHE_DIR / f"universe_{key}.csv.gz", CACHE_DIR / f"universe_{key}.json"
     if use_cache and cache_returns.exists() and cache_meta.exists():
         returns = pd.read_csv(cache_returns, index_col=0, parse_dates=True)
         return returns, json.loads(cache_meta.read_text())
 
-    equity_fx_tickers = {**config.STOCK_TICKERS, **config.NON_US_BOND_TICKERS, **config.CURRENCY_TICKERS}
+    equity_fx_tickers = {
+        **config.STOCK_TICKERS,
+        **config.NON_US_BOND_TICKERS,
+        **config.US_ULTRA_TBOND_TICKER,
+        **config.CURRENCY_TICKERS,
+    }
     name_of_ticker = {v: k for k, v in equity_fx_tickers.items()}
     prices, details = fetch_close_prices(list(equity_fx_tickers.values()), start_date, end_date)
     prices = prices.rename(columns=name_of_ticker)
@@ -240,15 +321,22 @@ def load_universe(
         raise DataLoaderError(f"No data loaded for instruments: {missing}")
 
     # Each column's history can start later than the requested window (a young
-    # ETF proxy, paper Sec. "Data-availability reduction"). The common sample
-    # used for estimation starts only once every instrument has data, so a
-    # young proxy's pre-listing period is excluded rather than filled with a
-    # fabricated zero return.
+    # ETF proxy, paper Sec. "Data-availability reduction"). Rather than
+    # truncating the whole panel to the date on which every instrument has
+    # data (which would collapse the 1993-2018 out-of-sample window used in
+    # Experiment 2 to only the few years after the last proxy's inception),
+    # each instrument's pre-listing period is kept as NaN and the EMA/MaxVar/
+    # risk-parity pipeline (``src.ema``, ``src.backtest``) treats an
+    # instrument as inactive until its own history begins, letting it join
+    # the universe progressively as real listed instruments do.
     first_valid = {c: returns[c].first_valid_index() for c in returns.columns}
-    common_start = max(first_valid.values())
-    returns = returns.loc[common_start:]
     returns = returns.dropna(how="all")
-    returns = returns.fillna(0.0)  # isolated single-market holidays within the common window
+    for column, start in first_valid.items():
+        if start is None:
+            continue
+        active = returns.index >= start
+        returns.loc[active, column] = returns.loc[active, column].fillna(0.0)
+        # isolated single-market holidays within the instrument's own active window
 
     first_obs = {c: str(first_valid[c]) for c in config.ALL_INSTRUMENTS}
     meta = {

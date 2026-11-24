@@ -1,0 +1,78 @@
+{
+  "config": {
+    "num_samples": 100,
+    "sample_length_T": 150,
+    "random_seed": 0,
+    "k_groups": 3,
+    "universe_size": 47,
+    "data_start_date_used": "1990-01-01",
+    "reference_date_requested": "2018-12-28"
+  },
+  "data_meta": {
+    "row_count": 8343,
+    "date_range": [
+      "1990-01-03 00:00:00",
+      "2018-12-28 00:00:00"
+    ],
+    "weekly_observations": 1513,
+    "reference_date_used": "2018-12-28 00:00:00",
+    "failed_tickers": {},
+    "non_massive_source": {
+      "EWN": "yahoo",
+      "MDY": "yahoo",
+      "IWM": "yahoo",
+      "EWQ": "yahoo",
+      "EWG": "yahoo",
+      "EWU": "yahoo",
+      "VGK": "yahoo",
+      "EWH": "yahoo",
+      "EWI": "yahoo",
+      "EWJ": "yahoo",
+      "DXJ": "yahoo",
+      "KF": "yahoo",
+      "EFA": "yahoo",
+      "EWP": "yahoo",
+      "EEM": "yahoo",
+      "IFN": "yahoo",
+      "QQQ": "yahoo",
+      "EWS": "yahoo",
+      "SPY": "yahoo",
+      "TWN": "yahoo",
+      "FEZ": "yahoo",
+      "EWC": "yahoo",
+      "EWA": "yahoo",
+      "DIA": "yahoo",
+      "ISHG": "yahoo",
+      "IGOV": "yahoo",
+      "BWX": "yahoo",
+      "EDV": "yahoo",
+      "EMB": "yahoo",
+      "WIP": "yahoo",
+      "PICB": "yahoo",
+      "BWZ": "yahoo",
+      "TLT": "yahoo",
+      "UUP": "yahoo"
+    }
+  },
+  "frobenius_distance": {
+    "empirical": {
+      "mean": 3.5440159906030595,
+      "std": 0.2506676253420661
+    },
+    "rie": {
+      "mean": 3.3558525350387436,
+      "std": 0.4265983227590207
+    },
+    "maxvar": {
+      "mean": 2.3144232622252745,
+      "std": 0.30936373718451776
+    },
+    "maxvar_reduction_vs_empirical": 0.34694897868351715,
+    "rie_reduction_vs_empirical": 0.05309328627840004
+  },
+  "expected_from_paper": {
+    "maxvar": 2.09,
+    "rie": 2.99,
+    "empirical": 3.24
+  }
+}

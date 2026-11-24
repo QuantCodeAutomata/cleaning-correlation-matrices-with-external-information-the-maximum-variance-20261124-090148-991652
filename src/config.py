@@ -55,14 +55,20 @@ STOCK_TICKERS = {
 US_TREASURY_MATURITIES = {
     # bond future -> (Massive treasury-yields field, duration in years for the
     # return approximation). Massive's constant-maturity series has no 20-year
-    # point, so the Ultra T-bond and the 30-year T-bond legs both read the
-    # 30-year yield, scaled by their own duration.
+    # point for the Ultra T-bond leg, which is instead proxied by a direct ETF
+    # below (see US_ULTRA_TBOND_TICKER).
     "US_TNote_2Y": ("yield_2_year", 2.0),
     "US_TNote_5Y": ("yield_5_year", 5.0),
     "US_TNote_10Y": ("yield_10_year", 10.0),
-    "US_Ultra_TBond": ("yield_30_year", 20.0),
     "US_TBond_30Y": ("yield_30_year", 25.0),  # long-bond effective duration below stated maturity
 }
+# The CME Ultra T-Bond future (25-year+ deliverable grade, paper Table 2) is
+# proxied by a directly traded ETF rather than by duration-scaling the same
+# 30-year constant-maturity yield series used for the 30-year T-bond leg:
+# since correlation is scale-invariant, two legs built from one yield series
+# at different durations would be exactly collinear (correlation 1), making
+# the empirical correlation matrix numerically singular.
+US_ULTRA_TBOND_TICKER = {"US_Ultra_TBond": "TLT"}  # iShares 20+ Year Treasury Bond ETF
 NON_US_BOND_TICKERS = {
     # All nine legs are proxied by U.S.-exchange-listed international or
     # emerging-market sovereign bond ETFs (Massive/Yahoo do not serve the
@@ -70,14 +76,18 @@ NON_US_BOND_TICKERS = {
     "Schatz_proxy": "ISHG",  # iShares 1-3Y International Treasury Bond ETF, short-duration proxy
     "Bobl_proxy": "IGOV",  # iShares International Treasury Bond ETF, medium-duration proxy
     "Bund_proxy": "BWX",  # SPDR Bloomberg International Treasury Bond ETF, long-duration proxy
-    "Buxl_proxy": "EMLC",  # VanEck J.P. Morgan EM Local Currency Bond ETF, long-duration/high-vol proxy
+    "Buxl_proxy": "EDV",  # Vanguard Extended Duration Treasury ETF, ultra-long-duration proxy for the Buxl
     "BTP_proxy": "EMB",  # iShares J.P. Morgan USD Emerging Markets Bond ETF, sovereign-spread proxy
     "OAT_proxy": "WIP",  # SPDR FTSE International Government Inflation-Protected Bond ETF
     "Gilt_proxy": "PICB",  # Invesco International Corporate Bond ETF, international duration proxy
     "Canada_10Y_proxy": "BNDX",  # Vanguard Total International Bond ETF, broad international duration proxy
     "JGB_proxy": "BWZ",  # SPDR Blmbg Short Term International Treasury Bond ETF, low-yield/duration proxy
 }
-BOND_TICKERS = {**{k: v[0] for k, v in US_TREASURY_MATURITIES.items()}, **NON_US_BOND_TICKERS}
+BOND_TICKERS = {
+    **{k: v[0] for k, v in US_TREASURY_MATURITIES.items()},
+    **NON_US_BOND_TICKERS,
+    **US_ULTRA_TBOND_TICKER,
+}
 
 # Currency group (9 contracts, paper Table 2), quoted against the U.S. dollar
 # and loaded through the Dataloader as Massive-direct forex pairs, except the
@@ -115,6 +125,17 @@ MC_NUM_SAMPLES = 100  # number of independent Monte Carlo samples
 MC_SAMPLE_LENGTH_T = 150  # length T of each simulated i.i.d. Gaussian sample
 MC_RANDOM_SEED = 0  # not specified in the paper; fixed here for reproducibility
 
+# Physics Reports (Bun, Bouchaud, Potters 2017) Sec. 5.2 gives only the order
+# eta = O(n**-0.5) for the Lorentzian smoothing width of the discretized
+# Stieltjes transform used by the RIE oracle shrinkage; neither it nor the
+# paper fixes a numerical value. Selected here, within that order of
+# magnitude, by a Monte Carlo sensitivity check (src/rie.py) on the Sec. 3
+# block-structured reference matrix: eta = n**-0.5 under-resolves the
+# isolated top eigenvalues produced by the group structure and leaves RIE's
+# cleaning no better than the empirical matrix, while eta = 0.05 restores a
+# positive, paper-consistent noise reduction.
+RIE_BANDWIDTH = 0.05
+
 # ---------------------------------------------------------------------------
 # Experiment 2: risk-parity backtest (paper Sec. 4, page 7-9)
 DATA_START_DATE_PAPER = "1985-05-08"  # paper's data start date (warm-up period)
@@ -124,6 +145,23 @@ BACKTEST_END_DATE = "2018-12-31"  # end of the out-of-sample performance window
 REBALANCE_FREQUENCY = "W"  # weekly rebalancing; not stated explicitly in the paper,
 # inferred from the weekly correlation-EMA update described in Sec. 2
 TRADING_DAYS_PER_YEAR = 252  # annualisation constant for the Sharpe ratio
+WEEKS_PER_YEAR = 52  # annualisation constant for the weekly portfolio Sharpe ratio;
+# the paper reports the Sharpe ratio of the weekly-rebalanced portfolio without
+# stating the annualisation convention, so the standard calendar-week count is used
+
+# Effective number of independent weekly observations behind each EMA
+# correlation estimate (paper Sec. 4, page 7: "with [eta'=1/750] the effective
+# window is on the order of ... 150 independent weekly returns", and about 20
+# for eta'=1/100). Used as the RIE's T (number of observations determining the
+# aspect ratio q = n/T) when cleaning the EMA correlation matrix in the
+# real-data backtest; matches the T=150 used for eta'=1/750 in Experiment 1.
+CORR_EMA_EFFECTIVE_T_PRIMARY = 150
+CORR_EMA_EFFECTIVE_T_ROBUSTNESS = 20
+
+BACKTEST_WARM_UP_WEEKS = 52  # weeks of EMA accumulation skipped before the
+# first portfolio is formed, so the correlation matrix is well-conditioned
+# before it is inverted; not specified in the paper, chosen conservatively and
+# always well before the 1993 start of the reported performance window
 
 # Data-availability reduction: history for several equity/ETF and bond-fund
 # proxies does not reach back to 1985; the realised sample start of every
